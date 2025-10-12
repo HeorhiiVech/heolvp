@@ -42,8 +42,12 @@ from soloq_logic import (
     fetch_and_store_soloq_data,
     get_soloq_activity_data
 )
-# <<< НОВЫЙ ИМПОРТ
 from start_positions_logic import get_start_positions_data
+from jng_clear_logic import get_jng_clear_data
+from objects_logic import get_objects_data
+# <<< НОВЫЙ ИМПОРТ ДЛЯ SWAP
+from swap_logic import get_swap_data
+
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "a_default_secret_key_change_me")
@@ -59,7 +63,6 @@ def inject_now():
 def inject_utility_processor():
     champ_data = get_champion_data()
     team_tag_map = TEAM_TAG_TO_FULL_NAME
-    # Добавляем get_latest_patch_version в контекст для JS
     return dict(
         get_champion_icon_html=get_champion_icon_html,
         champion_data=champ_data,
@@ -112,6 +115,52 @@ def update_hll_route():
     if added_games > 0: flash(f"Added/Updated {added_games} game(s) for {tournament_name_for_flash}!", "success")
     elif added_games == 0: flash(f"No new games found or updated for {tournament_name_for_flash}.", "info")
     return redirect(request.referrer or url_for('tournament'))
+
+@app.route('/jng_clear')
+def jng_clear():
+    selected_team = request.args.get('team')
+    selected_champion = request.args.get('champion', 'All')
+
+    all_teams, stats, available_champions = [], {}, []
+    try:
+        all_teams, stats, available_champions = get_jng_clear_data(
+            selected_team_full_name=selected_team,
+            selected_champion=selected_champion
+        )
+    except Exception as e:
+        log_message(f"Error in /jng_clear data aggregation: {e}")
+        import traceback
+        log_message(traceback.format_exc())
+        flash(f"Error loading jungle clear data: {e}", "error")
+        stats = {"error": "Failed to load jungle clear data."}
+
+    return render_template(
+        'jng_clear.html',
+        all_teams=all_teams,
+        selected_team=selected_team,
+        available_champions=available_champions,
+        selected_champion=selected_champion,
+        stats=stats
+    )
+
+@app.route('/objects')
+def objects():
+    selected_team = request.args.get('team')
+    all_teams, stats = [], {}
+    try:
+        all_teams, stats = get_objects_data(selected_team_full_name=selected_team)
+    except Exception as e:
+        log_message(f"Error in /objects data aggregation: {e}")
+        import traceback
+        log_message(traceback.format_exc())
+        flash(f"Error loading object data: {e}", "error")
+        stats = {"error": "Failed to load object data."}
+    
+    return render_template(
+        'objects.html',
+        all_teams=all_teams,
+        stats=stats
+    )
 
 @app.route('/wards')
 def wards():
@@ -187,7 +236,6 @@ def proximity():
         players_in_role=players_in_role
     )
 
-# --- НОВЫЙ МАРШРУТ ДЛЯ START POSITIONS ---
 @app.route('/start_positions')
 def start_positions():
     selected_team = request.args.get('team')
@@ -220,8 +268,6 @@ def start_positions():
         selected_champion=selected_champion,
         stats=stats
     )
-# --- КОНЕЦ НОВОГО МАРШРУТА ---
-
 
 @app.route('/soloq')
 def soloq():
@@ -311,6 +357,40 @@ def update_soloq_route():
         flash(f"SoloQ update completed with {update_errors} error(s). Check logs for details.", "warning")
 
     return redirect(request.referrer or url_for('soloq'))
+
+# <<< НОВЫЙ МАРШРУТ ДЛЯ SWAP ---
+@app.route('/swap')
+def swap():
+    selected_team = request.args.get('team')
+    selected_champion = request.args.get('champion', 'All')
+    games_filter = request.args.get('games_filter', '10')
+    games_filters = ["5", "10", "20", "All"]
+
+    all_teams, stats, available_champions = [], {}, []
+    try:
+        all_teams, stats, available_champions = get_swap_data(
+            selected_team_full_name=selected_team,
+            selected_champion=selected_champion,
+            games_filter=games_filter
+        )
+    except Exception as e:
+        log_message(f"Error in /swap data aggregation: {e}")
+        import traceback
+        log_message(traceback.format_exc())
+        flash(f"Error loading swap data: {e}", "error")
+        stats = {"error": "Failed to load swap data."}
+
+    return render_template(
+        'swap.html',
+        all_teams=all_teams,
+        selected_team=selected_team,
+        available_champions=available_champions,
+        selected_champion=selected_champion,
+        games_filters=games_filters,
+        selected_games_filter=games_filter,
+        stats=stats
+    )
+# --- КОНЕЦ НОВОГО МАРШРУТА ---
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5002, debug=True)

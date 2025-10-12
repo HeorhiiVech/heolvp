@@ -35,9 +35,9 @@ from scrims_logic import (
 from database import get_db_connection, TOURNAMENT_GAMES_HEADER
 
 # --- Constants ---
-TARGET_TOURNAMENT_ID = "827063"
+TARGET_TOURNAMENT_ID = "827065"
 TARGET_TOURNAMENT_NAME_FOR_DB = "HLL Split 3"
-MATCH_START_DATE_FILTER = "2025-04-03T00:00:00Z"
+MATCH_START_DATE_FILTER = "2025-10-02T00:00:00Z"
 TEAM_TAG_TO_FULL_NAME = {
 
 }
@@ -75,7 +75,6 @@ WARD_TYPE_MAP = {
 }
 VALID_WARD_TYPES = set(WARD_TYPE_MAP.keys())
 
-# Rift Zones and Polygons (LEFT EMPTY)
 # Rift Zones and Polygons (LEFT EMPTY)
 rift_zones = [
     'Blue Side Raptor Brush', 'Blue Side Raptors (Inner)', 'Blue Side Raptors (Outer)',
@@ -591,6 +590,7 @@ rift_zone_polygons_list = [
     Polygon([(442 * 30, 296 * 30), (443 * 30, 325 * 30), (478 * 30, 328 * 30), (478 * 30, 295 * 30)]),
 ]
 
+
 ZONE_POLYGONS = {}
 LANE_ZONE_NAMES = []
 if SHAPELY_AVAILABLE:
@@ -619,6 +619,152 @@ MONSTER_NAME_MAP_V3 = {
     "SRU_Baron": "Baron Nashor", "SRU_KrugMini": "Mini Krug",
     "SRU_KrugMiniMini": "Tiny Krug", "VoidGrub": "VoidGrub"
 }
+
+OBJECTIVE_TYPE_MAP = {
+    'SRU_Dragon_Air': ('DRAGON', 'CLOUD'), 'SRU_Dragon_Chemtech': ('DRAGON', 'CHEMTECH'),
+    'SRU_Dragon_Elder': ('DRAGON', 'ELDER'), 'SRU_Dragon_Fire': ('DRAGON', 'INFERNAL'),
+    'SRU_Dragon_Hextech': ('DRAGON', 'HEXTECH'), 'SRU_Dragon_Earth': ('DRAGON', 'MOUNTAIN'),
+    'SRU_Dragon_Water': ('DRAGON', 'OCEAN'), 'SRU_Baron': ('BARON', 'BARON'),
+    'SRU_RiftHerald': ('HERALD', 'HERALD'), 'VoidGrub': ('VOIDGRUB', 'VOIDGRUB')
+}
+
+TOWER_TYPE_MAP = {
+    'OUTER_TURRET': 'OUTER', 'INNER_TURRET': 'INNER',
+    'BASE_TURRET': 'INHIBITOR', 'NEXUS_TURRET': 'NEXUS'
+}
+
+# lol_app_LTA_1.4v/tournament_logic.py
+
+# lol_app_LTA_1.4v/tournament_logic.py
+
+def extract_objective_events(livestats_content_str, game_id, participants_summary):
+    """
+    Извлекает ключевые события по объектам (драконы, башни и т.д.) из livestats.
+    Версия 4.1: Финальная версия с корректным парсингом ThornboundAtakhan.
+    """
+    if not livestats_content_str: return []
+    
+    pid_to_teamid_map = {p.get("participantId"): p.get("teamId") for p in participants_summary if p.get("participantId") is not None}
+    
+    # ИЗМЕНЕНИЕ: Добавлен ThornboundAtakhan для корректного парсинга
+    OBJECTIVE_TYPE_MAP_V2 = {
+        'baron': ('BARON', 'BARON'),
+        'riftHerald': ('HERALD', 'HERALD'),
+        'ThornboundAtakhan': ('ATAKHAN', 'ATAKHAN'),
+        'VoidGrub': ('VOIDGRUB', 'VOIDGRUB')
+    }
+
+    TOWER_TYPE_MAP_V2 = {
+        'outer': 'OUTER', 'inner': 'INNER',
+        'inhibitor': 'INHIBITOR', 'nexus': 'NEXUS'
+    }
+    
+    LANE_TYPE_MAP = {
+        'top': 'TOP_LANE', 'mid': 'MID_LANE', 'bot': 'BOT_LANE'
+    }
+
+    events = []
+    try:
+        lines = livestats_content_str.strip().split('\n')
+    except Exception as e:
+        log_message(f"[Objectives] G:{game_id}: Could not split lines - {e}")
+        return []
+
+    for line in lines:
+        try:
+            snapshot = json.loads(line)
+            schema = snapshot.get("rfc461Schema")
+            game_time = snapshot.get("gameTime") or snapshot.get("timestamp")
+            event_type = snapshot.get("eventType") or snapshot.get("type")
+
+            # Эпические монстры
+            if event_type == "ELITE_MONSTER_KILL" or schema == "epic_monster_kill":
+                monster_type = snapshot.get("monsterType")
+                obj_type, obj_subtype = None, None
+
+                # ИЗМЕНЕНИЕ: Логика для драконов и Атахана теперь полностью разделена
+                if monster_type == 'dragon':
+                    obj_type = 'DRAGON'
+                    dragon_type_raw = snapshot.get("dragonType", "unknown").upper()
+                    # Старый ELDER (на всякий случай)
+                    if dragon_type_raw == "THORNBOUNDATAKHAN": 
+                        obj_type, obj_subtype = 'ATAKHAN', 'ATAKHAN'
+                    else: 
+                        obj_subtype = {'EARTH': 'MOUNTAIN'}.get(dragon_type_raw, dragon_type_raw)
+                elif monster_type in OBJECTIVE_TYPE_MAP_V2:
+                    obj_type, obj_subtype = OBJECTIVE_TYPE_MAP_V2[monster_type]
+
+                if obj_type:
+                    killer_pid = snapshot.get("killer") or snapshot.get("killerId")
+                    final_team_id = snapshot.get("killerTeamId") or pid_to_teamid_map.get(killer_pid)
+                    events.append({"game_id": game_id, "timestamp_ms": game_time, "objective_type": obj_type, "objective_subtype": obj_subtype, "team_id": final_team_id, "killer_participant_id": killer_pid, "lane": None})
+
+            # Башни
+            elif schema == "building_destroyed":
+                if game_time is None: continue
+                building_type = snapshot.get("buildingType")
+                if building_type == "turret":
+                    lane_raw = snapshot.get("lane", "unknown")
+                    lane = LANE_TYPE_MAP.get(lane_raw, "UNKNOWN_LANE")
+                    
+                    tower_tier_raw = snapshot.get("turretTier", "unknown")
+                    tower_tier = TOWER_TYPE_MAP_V2.get(tower_tier_raw, "UNKNOWN")
+                    
+                    owner_team_id_raw = snapshot.get("teamID")
+                    killer_team_id = None
+                    try:
+                        owner_team_id = int(owner_team_id_raw)
+                        if owner_team_id == 100: killer_team_id = 200
+                        elif owner_team_id == 200: killer_team_id = 100
+                    except (ValueError, TypeError): pass
+
+                    killer_pid = snapshot.get("lastHitter")
+                    final_team_id = killer_team_id or pid_to_teamid_map.get(killer_pid)
+                    
+                    events.append({
+                        "game_id": game_id, "timestamp_ms": game_time,
+                        "objective_type": "TOWER", "objective_subtype": tower_tier,
+                        "team_id": final_team_id,
+                        "killer_participant_id": killer_pid, "lane": lane
+                    })
+
+        except (json.JSONDecodeError, TypeError, KeyError):
+            continue
+            
+    log_message(f"[Objectives] G:{game_id}: Finished parsing. Extracted {len(events)} total objective events.")
+    return events
+
+def save_objective_events(conn, game_id, events):
+    """Сохраняет события по объектам для одной игры в БД."""
+    if not conn or not events: return False
+    
+    cursor = None
+    try:
+        cursor = conn.cursor()
+        # Сначала удаляем старые данные для этой игры
+        cursor.execute("DELETE FROM objective_events WHERE game_id = ?", (str(game_id),))
+        
+        to_insert = [
+            (
+                str(e['game_id']), int(e['timestamp_ms']), str(e['objective_type']),
+                str(e.get('objective_subtype')), e.get('team_id'),
+                e.get('killer_participant_id'), str(e.get('lane'))
+            ) for e in events
+        ]
+
+        if to_insert:
+            cursor.executemany("""
+                INSERT INTO objective_events
+                (game_id, timestamp_ms, objective_type, objective_subtype, team_id, killer_participant_id, lane)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, to_insert)
+            log_message(f"[DB Objectives Save] G:{game_id}: Saved {cursor.rowcount} objective events.")
+        return True
+    except sqlite3.Error as e:
+        log_message(f"[DB Objectives Save] G:{game_id}: Database error - {e}")
+        return False
+    finally:
+        if cursor: cursor.close()
 
 # --- Helper Functions (Jungle Pathing, Player Positions, etc.) ---
 def get_zone_for_position(x, z):
@@ -827,7 +973,6 @@ def process_livestats_content(conn, livestats_content_str, jungler_puuid, game_i
     first_camp_cleared = False
     first_recall_after_camp_detected = False
 
-    # !!! ИЗМЕНЕНИЕ: Используем переданное соединение 'conn' вместо создания нового
     cursor = conn.cursor()
     try:
         cursor.execute('SELECT Blue_JGL_PUUID, Red_JGL_PUUID FROM tournament_games WHERE "Game_ID" = ?', (str(game_id),))
@@ -838,7 +983,7 @@ def process_livestats_content(conn, livestats_content_str, jungler_puuid, game_i
     except sqlite3.Error as e:
         log_message(f"Error getting team side for G:{game_id}, P:{jungler_puuid[:8]}: {e}")
     finally:
-        if cursor: cursor.close() # Закрываем только курсор, не соединение
+        if cursor: cursor.close()
 
     try: lines = livestats_content_str.strip().split('\n')
     except Exception as split_err: log_message(f"Error splitting lines G:{game_id}: {split_err}"); return None
@@ -888,9 +1033,11 @@ def process_livestats_content(conn, livestats_content_str, jungler_puuid, game_i
                                     elif "Mid" in last_known_zone: lane_name = "Mid"
                                     elif "Bot" in last_known_zone: lane_name = "Bot"
                                     action_gank = f"Gank/Save {lane_name}"
-                                    if not path_sequence or path_sequence[-1] != action_gank:
-                                        path_sequence.append(action_gank)
-                                        last_action = action_gank
+                                    # ИЗМЕНЕНИЕ: Сохраняем как объект
+                                    gank_action_obj = {"action": action_gank, "time": game_time_sec}
+                                    if not path_sequence or path_sequence[-1].get("action") != action_gank:
+                                        path_sequence.append(gank_action_obj)
+                                        last_action = gank_action_obj
                             last_known_zone = current_zone
                             time_entered_zone = game_time_sec
                     break
@@ -901,7 +1048,8 @@ def process_livestats_content(conn, livestats_content_str, jungler_puuid, game_i
                 pos = snapshot.get("position")
                 if monster_type and pos and 'x' in pos and 'z' in pos:
                      action_camp = get_monster_details(monster_type, pos['x'], pos['z'], jungler_team_side)
-                     current_action = action_camp
+                     # ИЗМЕНЕНИЕ: Сохраняем как объект с действием и временем
+                     current_action = {"action": action_camp, "time": game_time_sec}
                      if game_time_sec <= last_kill_event_time + 0.5: current_action = None
                      else:
                          last_kill_event_time = game_time_sec
@@ -909,14 +1057,17 @@ def process_livestats_content(conn, livestats_content_str, jungler_puuid, game_i
         elif schema == "channeling_started" and snapshot.get("channelingType") == "recall":
              p_id = snapshot.get("participantID")
              if p_id == jungler_participant_id:
-                 current_action = "Recall"
+                 # ИЗМЕНЕНИЕ: Сохраняем как объект
+                 current_action = {"action": "Recall", "time": game_time_sec}
                  if game_time_sec <= last_recall_event_time + 1.0: current_action = None
                  else:
                      last_recall_event_time = game_time_sec
                      if first_camp_cleared: first_recall_after_camp_detected = True
 
         if current_action:
-            if not path_sequence or current_action != last_action:
+            # ИЗМЕНЕНИЕ: Сравниваем по ключу 'action' в словаре
+            last_action_name = last_action.get("action") if isinstance(last_action, dict) else last_action
+            if not path_sequence or current_action.get("action") != last_action_name:
                 path_sequence.append(current_action)
                 last_action = current_action
     return list(path_sequence)
@@ -1261,15 +1412,25 @@ def parse_and_store_tournament_game(cursor, summary_data, series_info, draft_act
         log_message(traceback.format_exc())
         return None
 
+# lol_app_LTA_1.4v/tournament_logic.py
+
 def fetch_and_store_tournament_data():
+    """
+    Главная функция для сбора и сохранения всех данных по турниру, включая
+    информацию об играх, пути лесников, варды, и события по объектам.
+    """
     tournament_id = TARGET_TOURNAMENT_ID
     tournament_name = TARGET_TOURNAMENT_NAME_FOR_DB
     log_message(f"Starting data fetch for tournament: {tournament_name} (ID: {tournament_id})")
     matches = get_tournament_matches(tournament_id)
-    if not matches: log_message("No matches found for the tournament."); return 0
+    if not matches:
+        log_message("No matches found for the tournament.")
+        return 0
 
     conn = get_db_connection()
-    if not conn: log_message("Failed to connect to database."); return -1
+    if not conn:
+        log_message("Failed to connect to database.")
+        return -1
     cursor = conn.cursor()
 
     added_or_updated_games_count = 0
@@ -1277,20 +1438,24 @@ def fetch_and_store_tournament_data():
     processed_position_snapshots_count = 0
     processed_first_wards_count = 0
     processed_all_wards_count = 0
-    processed_timeline_count = 0 
+    processed_timeline_count = 0
+    processed_objectives_count = 0
     processed_matches_count = 0
     total_matches = len(matches)
 
     for series_info in matches:
-        processed_matches_count += 1; series_id = series_info.get("id")
-        if not series_id: continue
+        processed_matches_count += 1
+        series_id = series_info.get("id")
+        if not series_id:
+            continue
         log_message(f"Processing match {processed_matches_count}/{total_matches} (S:{series_id})")
 
         series_end_state_data = download_grid_end_state_data(series_id)
         time.sleep(API_REQUEST_DELAY / 2)
         games_in_series = get_series_state(series_id)
         if not games_in_series:
-            time.sleep(API_REQUEST_DELAY / 2); continue
+            time.sleep(API_REQUEST_DELAY / 2)
+            continue
 
         for game_info in games_in_series:
             sequence_number = game_info.get("sequenceNumber")
@@ -1299,38 +1464,32 @@ def fetch_and_store_tournament_data():
 
             summary_data = download_riot_summary_data(series_id, sequence_number)
             if not summary_data:
-                time.sleep(API_REQUEST_DELAY / 2); continue
+                time.sleep(API_REQUEST_DELAY / 2)
+                continue
 
             game_id = summary_data.get("esportsGameId") or summary_data.get("gameId")
             if not game_id:
-                 continue
+                continue
             game_id = str(game_id)
 
             current_game_draft_actions = []
-            if series_end_state_data:
-                 try:
-                    game_state_from_series = None; series_state_content = series_end_state_data.get("seriesState", {});
-                    if series_state_content:
-                        games_array = series_state_content.get("games", [])
-                        if isinstance(games_array, list):
-                            for game_state in games_array:
-                                try:
-                                    if game_state and game_state.get("sequenceNumber") is not None and int(game_state.get("sequenceNumber")) == int(sequence_number):
-                                        game_state_from_series = game_state; break
-                                except (ValueError, TypeError): pass
-                        if game_state_from_series:
-                            actions = game_state_from_series.get("draftActions")
-                            if actions is not None and isinstance(actions, list): current_game_draft_actions = actions
-                 except Exception as e_draft: log_message(f"Error extracting draft for G:{game_id} Seq:{sequence_number}: {e_draft}")
+            if series_end_state_data and series_end_state_data.get("seriesState", {}).get("games"):
+                for game_state in series_end_state_data["seriesState"]["games"]:
+                    if game_state and game_state.get("sequenceNumber") == sequence_number:
+                        current_game_draft_actions = game_state.get("draftActions", [])
+                        break
 
             game_info_saved_id = parse_and_store_tournament_game(cursor, summary_data, series_info, current_game_draft_actions, tournament_name)
             if not game_info_saved_id:
-                 time.sleep(API_REQUEST_DELAY / 2); continue
+                time.sleep(API_REQUEST_DELAY / 2)
+                continue
             else:
-                 added_or_updated_games_count += 1
-                 try: conn.commit()
-                 except sqlite3.Error as e: log_message(f"DB Commit Error G:{game_id}: {e}"); conn.rollback()
-
+                added_or_updated_games_count += 1
+                try:
+                    conn.commit()
+                except sqlite3.Error as e:
+                    log_message(f"DB Commit Error G:{game_id}: {e}")
+                    conn.rollback()
 
             livestats_content = download_riot_livestats_data(series_id, sequence_number)
             time.sleep(API_REQUEST_DELAY)
@@ -1338,28 +1497,29 @@ def fetch_and_store_tournament_data():
             if livestats_content:
                 game_participants_summary = summary_data.get('participants', [])
 
-                timeline_positions = extract_player_positions_timeline(livestats_content, game_id)
-                if timeline_positions:
-                    if save_player_positions_timeline(conn, game_id, timeline_positions):
-                        processed_timeline_count += len(timeline_positions)
+                # <<< ИСПРАВЛЕНИЕ: Передаем 'game_participants_summary' в функцию >>>
+                objective_events = extract_objective_events(livestats_content, game_id, game_participants_summary)
+                if objective_events:
+                    if save_objective_events(conn, game_id, objective_events):
+                        processed_objectives_count += len(objective_events)
 
-                blue_jungler_puuid = None; red_jungler_puuid = None
-                if len(game_participants_summary) == 10:
-                    if 'puuid' in game_participants_summary[1]: blue_jungler_puuid = game_participants_summary[1].get("puuid")
-                    if 'puuid' in game_participants_summary[6]: red_jungler_puuid = game_participants_summary[6].get("puuid")
+                timeline_positions = extract_player_positions_timeline(livestats_content, game_id)
+                if timeline_positions and save_player_positions_timeline(conn, game_id, timeline_positions):
+                    processed_timeline_count += len(timeline_positions)
+
+                blue_jungler_puuid = game_participants_summary[1].get("puuid") if len(game_participants_summary) > 1 else None
+                red_jungler_puuid = game_participants_summary[6].get("puuid") if len(game_participants_summary) > 6 else None
 
                 paths_saved_this_game = 0
                 if blue_jungler_puuid:
-                    # !!! ИЗМЕНЕНИЕ: Передаем 'conn' в функцию
                     blue_path = process_livestats_content(conn, livestats_content, blue_jungler_puuid, game_id)
-                    if blue_path is not None and save_jungle_path(conn, game_id, blue_jungler_puuid, blue_path):
-                        paths_saved_this_game +=1
-                if red_jungler_puuid:
-                    # !!! ИЗМЕНЕНИЕ: Передаем 'conn' в функцию
-                    red_path = process_livestats_content(conn, livestats_content, red_jungler_puuid, game_id)
-                    if red_path is not None and save_jungle_path(conn, game_id, red_jungler_puuid, red_path):
+                    if blue_path and save_jungle_path(conn, game_id, blue_jungler_puuid, blue_path):
                         paths_saved_this_game += 1
-                if paths_saved_this_game > 0: processed_paths_count += paths_saved_this_game
+                if red_jungler_puuid:
+                    red_path = process_livestats_content(conn, livestats_content, red_jungler_puuid, game_id)
+                    if red_path and save_jungle_path(conn, game_id, red_jungler_puuid, red_path):
+                        paths_saved_this_game += 1
+                processed_paths_count += paths_saved_this_game
 
                 positions_data = extract_player_positions(livestats_content, game_id, TARGET_POSITION_TIMESTAMPS_SEC, TIMESTAMP_TOLERANCE_SEC)
                 snapshots_saved_this_game = 0
@@ -1367,27 +1527,27 @@ def fetch_and_store_tournament_data():
                     for ts_sec, pos_list in positions_data.items():
                         if pos_list and save_position_snapshot(conn, game_id, ts_sec, pos_list):
                             snapshots_saved_this_game += 1
-                if snapshots_saved_this_game > 0: processed_position_snapshots_count += snapshots_saved_this_game
+                if snapshots_saved_this_game > 0:
+                    processed_position_snapshots_count += snapshots_saved_this_game
 
                 first_wards_extracted = extract_first_ward_data(livestats_content, game_id, game_participants_summary)
                 if first_wards_extracted and save_first_ward_data(conn, game_id, first_wards_extracted):
                     processed_first_wards_count += len(first_wards_extracted)
-
+                
                 all_wards_extracted = extract_all_ward_data(livestats_content, game_id, game_participants_summary)
                 if all_wards_extracted and save_all_ward_data(conn, game_id, all_wards_extracted):
                     processed_all_wards_count += len(all_wards_extracted)
 
-                if paths_saved_this_game > 0 or snapshots_saved_this_game > 0 or processed_first_wards_count > 0 or processed_all_wards_count > 0 or processed_timeline_count > 0:
-                    try:
-                        conn.commit()
-                    except sqlite3.Error as e_commit_ls:
-                        log_message(f"DB Commit Error LiveStats G:{game_id}: {e_commit_ls}"); conn.rollback()
+                try:
+                    conn.commit()
+                except sqlite3.Error as e_commit_ls:
+                    log_message(f"DB Commit Error LiveStats G:{game_id}: {e_commit_ls}")
+                    conn.rollback()
         time.sleep(API_REQUEST_DELAY)
 
-    log_message(f"Tournament data update finished. Games: {added_or_updated_games_count}, Paths: {processed_paths_count}, PosSnapshots: {processed_position_snapshots_count}, FirstWards: {processed_first_wards_count}, AllWards: {processed_all_wards_count}, TimelinePoints: {processed_timeline_count}.")
+    log_message(f"Tournament data update finished. Games: {added_or_updated_games_count}, Objectives: {processed_objectives_count}, Paths: {processed_paths_count}, PosSnapshots: {processed_position_snapshots_count}, FirstWards: {processed_first_wards_count}, AllWards: {processed_all_wards_count}, TimelinePoints: {processed_timeline_count}.")
     conn.close()
     return added_or_updated_games_count
-
 def fetch_and_store_ward_data():
     """
     Проходит по всем существующим играм в БД, скачивает для них livestats

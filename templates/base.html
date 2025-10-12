@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}heovech{% endblock %}</title>
+    <title>{% block title %}LTA South{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,10 +14,13 @@
         <nav class="sidebar">
             <a href="{{ url_for('index') }}" class="sidebar-brand">heovech</a>
             <ul class="sidebar-nav">
-                <li><a href="{{ url_for('tournament') }}" class="nav-link {% if request.endpoint == 'tournament' %}active{% endif %}">Tournament</a></li>
+                <li><a href="{{ url_for('tournament') }}" class="nav-link {% if request.endpoint == 'tournament' %}active{% endif %}">EMEA Masters</a></li>
+                <li><a href="{{ url_for('jng_clear') }}" class="nav-link {% if request.endpoint == 'jng_clear' %}active{% endif %}">JNG Clear</a></li>
+                <li><a href="{{ url_for('objects') }}" class="nav-link {% if request.endpoint == 'objects' %}active{% endif %}">Objects</a></li>
+                <li><a href="{{ url_for('swap') }}" class="nav-link {% if request.endpoint == 'swap' %}active{% endif %}">Swap</a></li>
                 <li><a href="{{ url_for('wards') }}" class="nav-link {% if request.endpoint == 'wards' %}active{% endif %}">Wards</a></li>
                 <li><a href="{{ url_for('proximity') }}" class="nav-link {% if request.endpoint == 'proximity' %}active{% endif %}">Proximity</a></li>
-                <li><a href="{{ url_for('start_positions') }}" class="nav-link {% if request.endpoint == 'start_positions' %}active{% endif %}">Start Positions</a></li> {# <<< НОВАЯ ССЫЛКА #}
+                <li><a href="{{ url_for('start_positions') }}" class="nav-link {% if request.endpoint == 'start_positions' %}active{% endif %}">Start Positions</a></li>
                 <li><a href="{{ url_for('soloq') }}" class="nav-link {% if request.endpoint == 'soloq' %}active{% endif %}">SoloQ Stats</a></li>
             </ul>
             <div class="sidebar-footer">
