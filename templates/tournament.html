@@ -99,7 +99,7 @@
                 <form method="get" action="{{ url_for('tournament') }}" class="filter-form" style="display: inline-block;">
                     <label for="team_select">View Stats:</label>
                     <select name="team" id="team_select" onchange="this.form.submit()">
-                        <option value="" {% if not selected_team %}selected{% endif %}>-- Overall Tournament --</option>
+                        <option value="" {% if not selected_team %}selected{% endif %}>-- Overall Teams --</option>
                         {% for team_display_name in all_teams %}
                             <option value="{{ team_display_name }}" {% if team_display_name == selected_team %}selected{% endif %}>
                                 {{ team_display_name }}
